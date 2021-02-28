@@ -1,0 +1,369 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Othello AI application infrastructure'
+Parameters:
+  KeyName:
+    Description: 'Key Pair name'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: tokioKey
+
+  CIDRForSSH:
+    Description: 'CIDR allowed to ssh'
+    Type: 'String'
+    Default: '0.0.0.0/0'
+
+
+Resources:
+
+### Network ###
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: {}
+
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  VMSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: '10.0.56.0/24'
+      VpcId: !Ref VPC
+
+  VMSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: '10.0.57.0/24'
+      VpcId: !Ref VPC
+
+  RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+
+  RouteTableAssociation1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref VMSubnet1
+      RouteTableId: !Ref RouteTable
+
+  RouteTableAssociation2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref VMSubnet2
+      RouteTableId: !Ref RouteTable
+
+  RoutePublicSubnetToInternet:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+    DependsOn: 
+      - VPCGatewayAttachment
+
+  NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VPC
+
+  SubnetNetworkAclAssociation1:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref VMSubnet1
+      NetworkAclId: !Ref NetworkAcl
+
+  SubnetNetworkAclAssociation2:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref VMSubnet2
+      NetworkAclId: !Ref NetworkAcl
+
+
+  NetworkAclEntryIngress:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: '0.0.0.0/0'
+
+  NetworkAclEntryEgress:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+
+
+### Load balancer ###
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Type: application
+      Subnets:
+        - Ref: VMSubnet1
+        - Ref: VMSubnet2
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Scheme: 'internet-facing'
+    DependsOn: VPCGatewayAttachment
+
+  LoadBalancerListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LoadBalancerTargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  LoadBalancerTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: '/othello/isBusy'
+      HealthCheckPort: '80'
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200-299'
+      Port: 80
+      Protocol: HTTP
+      Targets:
+        - Id: !Ref WebServer1
+          Port: 80
+        - Id: !Ref WebServer2
+          Port: 80
+      VpcId: !Ref VPC
+
+  LoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Load balancer security group'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - CidrIp: '202.215.72.251/32'
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+
+
+### Web server ###
+  WebServer1:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-09d28faae2e9e7138'
+      InstanceType: 't2.micro'
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          SubnetId: !Ref VMSubnet1
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref WebServerSecurityGroup
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash -x
+          
+          yum -y update
+          
+          yum -y install nmap-ncat
+          bash -ex << "TRY"
+            echo "mount start!" >> /var/log/mylog.txt
+            # wait until EFS file system is available
+            while ! nc -z ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com 2049; do sleep 10; done
+            sleep 10
+            
+            # copy existing /home to /oldhome
+            mkdir /oldhome
+            cp -a /home/. /oldhome
+            
+            # mount EFS file system
+            echo "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /home nfs4 nfsvers=4.1, rsize=1048576, wsize=1048576, hard, timeo=600, retrans=2, _netdev 0 0" >> /etc/fstab
+            mount -a
+            
+            # copy /oldhome to new /home
+            cp -a /oldhome/. /home
+            echo "mount end!" >> /var/log/mylog.txt
+          TRY
+          
+          # web server setup
+          echo "web server setup start!" >> /var/log/mylog.txt
+          curl -s https://raw.githubusercontent.com/E-Kohei/tmpAWS/main/othello-server/webserver-setup.sh | bash -ex
+          echo "web server setup end!" >> /var/log/mylog.txt
+          # Notify CloudFormation that the script ended
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer1 --region ${AWS::Region}
+    DependsOn:
+      - VPCGatewayAttachment
+      - EFSMountTarget1
+
+  WebServer2:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-09d28faae2e9e7138'
+      InstanceType: 't2.micro'
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          SubnetId: !Ref VMSubnet2
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref WebServerSecurityGroup
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash -x
+          
+          yum -y update
+          
+          yum -y install nmap-ncat
+          bash -ex << "TRY"
+            echo "mount start!" >> /var/log/mylog.txt
+            # wait until EFS file system is available
+            while ! nc -z ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com 2049; do sleep 10; done
+            sleep 10
+            
+            # WebServer1 should have copied /home, so WebServer2 don't have to do it
+            
+            # mount EFS file system
+            echo "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /home nfs4 nfsvers=4.1, rsize=1048576, wsize=1048576, hard, timeo=600, retrans=2, _netdev 0 0" >> /etc/fstab
+            mount -a
+            echo "mount end!" >> /var/log/mylog.txt
+          TRY
+          
+          # web server setup
+          echo "web server setup start!" >> /var/log/mylog.txt
+          curl -s https://raw.githubusercontent.com/E-Kohei/tmpAWS/main/othello-server/webserver-setup.sh | bash -ex
+          echo "web server setup end!" >> /var/log/mylog.txt
+          # Notify CloudFormation that the script ended
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer2 --region ${AWS::Region}
+    DependsOn:
+      - VPCGatewayAttachment
+      - EFSMountTarget2
+  
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'web server security group'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - CidrIp: !Sub ${CIDRForSSH}
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+        - SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          IpProtocol: tcp 
+          FromPort: 80
+          ToPort: 80
+
+
+### Database ###
+  Database:
+    Type: 'AWS::RDS::DBInstance'
+    DeletionPolicy: Delete
+    Properties:
+      AllocatedStorage: '5'
+      BackupRetentionPeriod: 0
+      DBInstanceClass: 'db.t2.micro'
+      DBName: othello
+      Engine: MySQL
+      MasterUsername: ekohei
+      MasterUserPassword: I3Jc0iE2vd
+      VPCSecurityGroups:
+        - !Sub ${DatabaseSecurityGroup.GroupId}
+      DBSubnetGroupName: !Ref DBSubnetGroup
+    DependsOn: VPCGatewayAttachment
+
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: 'DB subnet group'
+      SubnetIds:
+        - Ref: VMSubnet1
+        - Ref: VMSubnet2
+
+  DatabaseSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'database security group'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+
+
+# File system
+  EFSFileSystem:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: 'othello-efs'
+
+  EFSMountTarget1:
+    Type: 'AWS::EFS::MountTarget'
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref VMSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSMountTarget2:
+    Type: 'AWS::EFS::MountTarget'
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref VMSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allowing access to EFS'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref WebServerSecurityGroup
+          IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+
+
+Outputs:
+  LoadBalancerURL:
+    Value: !Sub 'http://${LoadBalancer.DNSName}'
+    Description: 'Othello app URL'
+  WebServerIPAddress1:
+    Value: !Sub '${WebServer1.PublicIp}'
+    Description: 'Dns name of web server 1 for ssh'
+  WebServerIPAddress2:
+    Value: !Sub '${WebServer2.PublicIp}'
+    Description: 'Dns name of web server 2 for ssh'
+  DatabasePrivateURL:
+    Value: !Sub '${Database.Endpoint.Address}'
+  EFSFileSystemURL:
+    Value: !Sub '${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com'
+  EFSFileSystemIp1:
+    Value: !Sub '{EFSMountTarget1.IpAddress}'
+  EFSFileSystemIp2:
+    Value: !Sub '{EFSMountTarget2.IpAddress}'
+
