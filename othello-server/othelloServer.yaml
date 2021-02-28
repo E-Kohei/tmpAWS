@@ -12,6 +12,11 @@ Parameters:
     Type: 'String'
     Default: '0.0.0.0/0'
 
+  DBPassword:
+    Description: 'Database password'
+    Type: 'String'
+    Default: 'dbpassword'
+
 
 Resources:
 
@@ -286,7 +291,7 @@ Resources:
       DBName: othello
       Engine: MySQL
       MasterUsername: ekohei
-      MasterUserPassword: I3Jc0iE2vd
+      MasterUserPassword: !Ref DBPassword
       VPCSecurityGroups:
         - !Sub ${DatabaseSecurityGroup.GroupId}
       DBSubnetGroupName: !Ref DBSubnetGroup
