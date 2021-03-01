@@ -12,6 +12,7 @@ yum-config-manager --disable mysql57-community
 yum-config-manager --enable mysql80-community
 yum -y install mysql-community-devel
 
+
 ## python
 yum -y install gcc gcc-c++
 yum -y install libffi-devel openssl-devel readline-devel zlib-devel gdbm-devel sqlite-devel
@@ -40,7 +41,7 @@ echo "LoadModule wsgi_module modules/mod_wsgi.so" >> /etc/httpd/conf/httpd.conf
 
 
 ## django and tensorflow
-python3 -m pip install --upgrade pip
-python3 -m pip install mysqlclient
-python3 -m pip install django
-python3 -m pip install tensorflow
+#python3 -m pip install --upgrade pip
+#python3 -m pip install mysqlclient
+#python3 -m pip install django
+#python3 -m pip install tensorflow
