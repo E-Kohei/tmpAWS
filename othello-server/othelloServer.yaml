@@ -191,36 +191,22 @@ Resources:
           
           yum -y update
           
-          yum -y install nmap-ncat
-          bash -ex << "TRY"
-            echo "mount start!" >> /var/log/mylog.txt
-            # wait until EFS file system is available
-            while ! nc -z ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com 2049; do sleep 10; done
-            sleep 10
-            
-            # copy existing /home to /oldhome
-            #mkdir /oldhome
-            #cp -a /home/. /oldhome
-            
-            # mount EFS file system
-            mkdir -p /var/www/django
-            echo "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /var/www/django nfs4 nfsvers=4.1, rsize=1048576, wsize=1048576, hard, timeo=600, retrans=2, _netdev 0 0" >> /etc/fstab
-            mount -a
-            
-            # copy /oldhome to new /home
-            #cp -a /oldhome/. /home
-            echo "mount end!" >> /var/log/mylog.txt
-          TRY
+          # mount EBS storage
+          while [ ! -b /dev/xvdf ]; do sleep 10; done
+          sleep 10
+          mkfs -t ext4 /dev/xvdf
+          mkdir /mnt/django_project
+          mount /dev/xvdf /mnt/django_project
           
           echo "web server setup start!" >> /var/log/mylog.txt
           # web server setup
           curl -s https://raw.githubusercontent.com/E-Kohei/tmpAWS/main/othello-server/webserver-setup.sh | bash -ex
           echo "web server setup end!" >> /var/log/mylog.txt
+          
           # Notify CloudFormation that the script ended
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer1 --region ${AWS::Region}
     DependsOn:
       - VPCGatewayAttachment
-      - EFSMountTarget1
 
   WebServer2:
     Type: 'AWS::EC2::Instance'
@@ -241,31 +227,22 @@ Resources:
           
           yum -y update
           
-          yum -y install nmap-ncat
-          bash -ex << "TRY"
-            echo "mount start!" >> /var/log/mylog.txt
-            # wait until EFS file system is available
-            while ! nc -z ${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com 2049; do sleep 10; done
-            sleep 10
-            
-            # WebServer1 should have copied /home, so WebServer2 don't have to do it
-            
-            # mount EFS file system
-            mkdir -p /var/www/django
-            echo "${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /var/www/django nfs4 nfsvers=4.1, rsize=1048576, wsize=1048576, hard, timeo=600, retrans=2, _netdev 0 0" >> /etc/fstab
-            mount -a
-            echo "mount end!" >> /var/log/mylog.txt
-          TRY
+          # mount EBS storage
+          while [ ! -b /dev/xvdf ]; do sleep 10; done
+          sleep 10
+          mkfs -t ext4 /dev/xvdf
+          mkdir /mnt/django_project
+          mount /dev/xvdf /mnt/django_project
           
           echo "web server setup start!" >> /var/log/mylog.txt
           # web server setup
           curl -s https://raw.githubusercontent.com/E-Kohei/tmpAWS/main/othello-server/webserver-setup.sh | bash -ex
           echo "web server setup end!" >> /var/log/mylog.txt
+          
           # Notify CloudFormation that the script ended
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer2 --region ${AWS::Region}
     DependsOn:
       - VPCGatewayAttachment
-      - EFSMountTarget2
   
   WebServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
@@ -320,40 +297,42 @@ Resources:
           ToPort: 3306
 
 
-# File system
-  EFSFileSystem:
-    Type: 'AWS::EFS::FileSystem'
+### Volume ###
+  Volume1:
+    Type: 'AWS::EC2::Volume'
     Properties:
-      FileSystemTags:
+      AvailabilityZone: !Sub ${WebServer1.AvailabilityZone}
+      Size: 5
+      VolumeType: gp2
+      Tags:
         - Key: Name
-          Value: 'othello-efs'
+          Value: 'django application storage 1'
 
-  EFSMountTarget1:
-    Type: 'AWS::EFS::MountTarget'
+  VolumeAttachment1:
+    Type: 'AWS::EC2::VolumeAttachment'
+    Condition: Attached
     Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SubnetId: !Ref VMSubnet1
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
+      Device: 'dev/xvdf'
+      InstanceId: !Ref WebServer1
+      VolumeId: !Ref Volume1
+  
+  Volume2:
+    Type: 'AWS::EC2::Volume'
+    Properties:
+      AvailabilityZone: !Sub ${WebServer2.AvailabilityZone}
+      Size: 5
+      VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: 'django application storage 2'
 
-  EFSMountTarget2:
-    Type: 'AWS::EFS::MountTarget'
+  VolumeAttachment2:
+    Type: 'AWS::EC2::VolumeAttachment'
+    Condition: Attached
     Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SubnetId: !Ref VMSubnet2
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
-
-  EFSSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'Allowing access to EFS'
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - SourceSecurityGroupId: !Ref WebServerSecurityGroup
-          IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
+      Device: 'dev/xvdf'
+      InstanceId: !Ref WebServer2
+      VolumeId: !Ref Volume2
 
 
 Outputs:
@@ -368,10 +347,4 @@ Outputs:
     Description: 'Dns name of web server 2 for ssh'
   DatabasePrivateURL:
     Value: !Sub '${Database.Endpoint.Address}'
-  EFSFileSystemURL:
-    Value: !Sub '${EFSFileSystem}.efs.${AWS::Region}.amazonaws.com'
-  EFSFileSystemIp1:
-    Value: !Sub '${EFSMountTarget1.IpAddress}'
-  EFSFileSystemIp2:
-    Value: !Sub '${EFSMountTarget2.IpAddress}'
 
