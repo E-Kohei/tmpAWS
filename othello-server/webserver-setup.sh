@@ -54,3 +54,4 @@ source bin/activate
 bin/python3 -m pip install mysqlclient
 bin/python3 -m pip install django
 bin/python3 -m pip install tensorflow --no-cache-dir
+deactivate

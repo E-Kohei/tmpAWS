@@ -17,6 +17,16 @@ Parameters:
     Type: 'String'
     Default: 'dbpassword'
 
+  DoAttachVolume:
+    Description: 'Should the volume be attached?'
+    Type: String
+    Default: 'yes'
+    AllowedValues:
+      - 'yes'
+      - 'no'
+
+Conditions:
+  DoAttach: !Equals [!Ref DoAttachVolume, 'yes']
 
 Resources:
 
@@ -302,7 +312,7 @@ Resources:
     Type: 'AWS::EC2::Volume'
     Properties:
       AvailabilityZone: !Sub ${WebServer1.AvailabilityZone}
-      Size: 5
+      Size: 3
       VolumeType: gp2
       Tags:
         - Key: Name
@@ -310,9 +320,9 @@ Resources:
 
   VolumeAttachment1:
     Type: 'AWS::EC2::VolumeAttachment'
-    Condition: Attached
+    Condition: DoAttach
     Properties:
-      Device: 'dev/xvdf'
+      Device: '/dev/xvdf'
       InstanceId: !Ref WebServer1
       VolumeId: !Ref Volume1
   
@@ -320,7 +330,7 @@ Resources:
     Type: 'AWS::EC2::Volume'
     Properties:
       AvailabilityZone: !Sub ${WebServer2.AvailabilityZone}
-      Size: 5
+      Size: 3
       VolumeType: gp2
       Tags:
         - Key: Name
@@ -328,9 +338,9 @@ Resources:
 
   VolumeAttachment2:
     Type: 'AWS::EC2::VolumeAttachment'
-    Condition: Attached
+    Condition: DoAttach
     Properties:
-      Device: 'dev/xvdf'
+      Device: '/dev/xvdf'
       InstanceId: !Ref WebServer2
       VolumeId: !Ref Volume2
 
