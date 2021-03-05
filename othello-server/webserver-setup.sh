@@ -55,3 +55,9 @@ bin/python3 -m pip install mysqlclient
 bin/python3 -m pip install django
 bin/python3 -m pip install tensorflow --no-cache-dir
 deactivate
+
+
+# mount file system which includes django application
+mkdir -p /var/www/django
+mount /dev/xvdf /var/www/django
+
