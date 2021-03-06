@@ -17,16 +17,6 @@ Parameters:
     Type: 'String'
     Default: 'dbpassword'
 
-  DoAttachVolume:
-    Description: 'Should the volume be attached?'
-    Type: String
-    Default: 'yes'
-    AllowedValues:
-      - 'yes'
-      - 'no'
-
-Conditions:
-  DoAttach: !Equals [!Ref DoAttachVolume, 'yes']
 
 Resources:
 
@@ -157,15 +147,13 @@ Resources:
           DeviceIndex: '0'
           GroupSet:
             - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+        - Value: 'othelloApp.WebServerInstance1'
       UserData:
         'Fn::Base64': !Sub |
           #!/bin/bash -x
           yum -y update
-          
-          # mount EBS storage
-          while [ ! -b /dev/xvdf ]; do sleep 10; done
-          sleep 10
-          mkfs -t ext4 /dev/xvdf
           
           # web server setup
           curl -s https://raw.githubusercontent.com/E-Kohei/tmpAWS/main/othello-server/webserver-setup.sh | bash -ex
@@ -173,9 +161,9 @@ Resources:
           # create database for django application
           # this operation is done by either of the two machines
           yum -y install mysql-community-client
-          while ! nc -z ${Database.EndPoint.Address} 3306; do sleep 10; done
+          while ! nc -z ${Database.Endpoint.Address} 3306; do sleep 10; done
           sleep 10
-          mysql --user=ekohei --host=${Database.EndPoint.Address} --password=${DBPassword} --database=othello --execute="CREATE TABLE records (id INTEGER PRIMARY KEY AUTO_INCREMENT, date_time CHAR(20) NOT NULL, dark_player VARCHAR(11) NOT NULL, light_player VARCHAR(11) NOT NULL, dark_score SMALLINT NOT NULL, light_score SMALLINT NOT NULL, moves VARCHAR(250) NOT NULL);"
+          mysql --user=ekohei --host=${Database.Endpoint.Address} --password=${DBPassword} --database=othello --execute="CREATE TABLE records (id INTEGER PRIMARY KEY AUTO_INCREMENT, date_time CHAR(20) NOT NULL, dark_player VARCHAR(11) NOT NULL, light_player VARCHAR(11) NOT NULL, dark_score SMALLINT NOT NULL, light_score SMALLINT NOT NULL, moves VARCHAR(250) NOT NULL);"
           
           # Notify CloudFormation that the script ended
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer1 --region ${AWS::Region}
@@ -195,15 +183,13 @@ Resources:
           DeviceIndex: '0'
           GroupSet:
             - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+        - Value: 'othelloApp.WebServerInstance2'
       UserData:
         'Fn::Base64': !Sub |
           #!/bin/bash -x
           yum -y update
-          
-          # mount EBS storage
-          while [ ! -b /dev/xvdf ]; do sleep 10; done
-          sleep 10
-          mkfs -t ext4 /dev/xvdf
           
           # web server setup
           curl -s https://raw.githubusercontent.com/E-Kohei/tmpAWS/main/othello-server/webserver-setup.sh | bash -ex
@@ -244,6 +230,9 @@ Resources:
       VPCSecurityGroups:
         - !Sub ${DatabaseSecurityGroup.GroupId}
       DBSubnetGroupName: !Ref DBSubnetGroup
+      Tags:
+        - Key: Name
+        - Value: 'othelloApp.DBInstance'
     DependsOn: VPCGatewayAttachment
 
   DBSubnetGroup:
@@ -265,43 +254,6 @@ Resources:
           FromPort: 3306
           ToPort: 3306
 
-
-### Volume ###
-  Volume1:
-    Type: 'AWS::EC2::Volume'
-    Properties:
-      AvailabilityZone: !Sub ${WebServer1.AvailabilityZone}
-      Size: 3
-      VolumeType: gp2
-      Tags:
-        - Key: Name
-          Value: 'django application storage 1'
-
-  VolumeAttachment1:
-    Type: 'AWS::EC2::VolumeAttachment'
-    Condition: DoAttach
-    Properties:
-      Device: '/dev/xvdf'
-      InstanceId: !Ref WebServer1
-      VolumeId: !Ref Volume1
-  
-  Volume2:
-    Type: 'AWS::EC2::Volume'
-    Properties:
-      AvailabilityZone: !Sub ${WebServer2.AvailabilityZone}
-      Size: 3
-      VolumeType: gp2
-      Tags:
-        - Key: Name
-          Value: 'django application storage 2'
-
-  VolumeAttachment2:
-    Type: 'AWS::EC2::VolumeAttachment'
-    Condition: DoAttach
-    Properties:
-      Device: '/dev/xvdf'
-      InstanceId: !Ref WebServer2
-      VolumeId: !Ref Volume2
 
 
 Outputs:
