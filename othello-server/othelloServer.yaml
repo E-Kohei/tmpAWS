@@ -17,6 +17,16 @@ Parameters:
     Type: 'String'
     Default: 'dbpassword'
 
+  StartSchedule:
+    Description: 'Time to start this application'
+    Type: 'String'
+    Default: 'cron(45 0 * * ? *)'
+
+  StopSchedule:
+    Description: 'Time to stop this application'
+    Type: 'String'
+    Default: 'cron(15 10 * * ? *)'
+
 
 Resources:
 
@@ -149,7 +159,7 @@ Resources:
             - !Ref WebServerSecurityGroup
       Tags:
         - Key: Name
-        - Value: 'othelloApp.WebServerInstance1'
+          Value: 'othelloApp.WebServerInstance1'
       UserData:
         'Fn::Base64': !Sub |
           #!/bin/bash -x
@@ -185,7 +195,7 @@ Resources:
             - !Ref WebServerSecurityGroup
       Tags:
         - Key: Name
-        - Value: 'othelloApp.WebServerInstance2'
+          Value: 'othelloApp.WebServerInstance2'
       UserData:
         'Fn::Base64': !Sub |
           #!/bin/bash -x
@@ -232,7 +242,7 @@ Resources:
       DBSubnetGroupName: !Ref DBSubnetGroup
       Tags:
         - Key: Name
-        - Value: 'othelloApp.DBInstance'
+          Value: 'othelloApp.DBInstance'
     DependsOn: VPCGatewayAttachment
 
   DBSubnetGroup:
@@ -255,6 +265,226 @@ Resources:
           ToPort: 3306
 
 
+### Lambda functions ###
+  FunctionStartInstances:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Runtime: python3.8
+      Role: !GetAtt RoleStartStopInstances.Arn
+      Handler: index.lambda_handler
+      Timeout: 60
+      Description: 'Starts EC2 and RDS instances'
+      Code:
+        ZipFile: |
+          import boto3
+          from botocore.exceptions import ClientError
+          
+          ec2 = boto3.client("ec2", region_name="ap-northeast-1")
+          rds = boto3.client("rds", region_name="ap-northeast-1")
+
+          def search_db_by_tag(dbInstances, tagKey, tagValue, onlyKey=False):
+              result = []
+              if onlyKey:
+                  # search for tag key
+                  for instance in dbInstances:
+                      if tagKey in [tag["Key"] for tag in instance["TagList"]]:
+                          result.append(instance)
+              else:
+                  # search for tag which matches both of key and value
+                  for instance in dbInstances:
+                      if {"Key":tagKey, "Value":tagValue} in instance["TagList"]:
+                         result.append(instance)
+              return result
+
+
+          def lambda_handler(event, context):
+              webservers = ec2.describe_instances(
+                  Filters=[{
+                      'Name': 'tag:Name',
+                      'Values': ['othelloApp.WebServerInstance*']
+                  }]
+              )["Reservations"]
+              instanceIds = [reservation["Instances"][0]["InstanceId"]
+                             for reservation in webservers]
+            
+              dbInstances = search_db_by_tag(
+                  rds.describe_db_instances()["DBInstances"],
+                  "Name", "othelloApp.DBInstance"
+              )
+              dbInstanceIds = [instance["DBInstanceIdentifier"]
+                               for instance in dbInstances]
+            
+              try:
+                  ec2.start_instances(InstanceIds=instanceIds, DryRun=True)
+              except ClientError as ce:
+                  if 'DryRunOperation' not in str(ce):
+                      raise
+            
+              # Dry run succeeded, run start_instances without dryrun
+              try:
+                  response = ec2.start_instances(
+                      InstanceIds=instanceIds,
+                      DryRun=False
+                  )
+                  print("started web servers")
+                  for dbInstanceId in dbInstanceIds:
+                      dbResponse = rds.start_db_instance(
+                          DBInstanceIdentifier=dbInstanceId
+                      )
+                  print("started db instances")
+              except ClientError as ce:
+                  print(ce)
+              except Exception as e:
+                  print(e)
+
+  FunctionStopInstances:
+    Type: 'AWS::Lambda::Function
+    Properties:
+      Runtime: python3.8
+      Role: !GetAtt RoleStartStopInstances.Arn
+      Handler: index.lambda_handler
+      Timeout: 60
+      Description: 'Stops EC2 and RDS instances'
+      Code:
+        ZipFile: |
+          import boto3
+          from botocore.exceptions import ClientError
+
+          ec2 = boto3.client("ec2", region_name="ap-northeast-1")
+          rds = boto3.client("rds", region_name="ap-northeast-1")
+
+          def search_db_by_tag(dbInstances, tagKey, tagValue, onlyKey=False):
+              result = []
+              if onlyKey:
+                  # search for tag key
+                  for instance in dbInstances:
+                      if tagKey in [tag["Key"] for tag in instance["TagList"]]:
+                          result.append(instance)
+              else:
+                  # search for tag which matches both of key and value
+                  for instance in dbInstances:
+                      if {"Key":tagKey, "Value":tagValue} in instance["TagList"]:
+                          result.append(instance)
+              return result
+
+
+          def lambda_handler(event, context):
+              webservers = ec2.describe_instances(
+                  Filters=[{
+                      'Name': 'tag:Name',
+                      'Values': ['othelloApp.WebServerInstance*']
+                  }]
+              )["Reservations"]
+              instanceIds = [reservation["Instances"][0]["InstanceId"]
+                              for reservation in webservers]
+            
+              dbInstances = search_db_by_tag(
+                  rds.describe_db_instances()["DBInstances"],
+                  "Name", "othelloApp.DBInstance"
+              )
+              dbInstanceIds = [instance["DBInstanceIdentifier"]
+                               for instance in dbInstances]
+
+              try:
+                  ec2.stop_instances(InstanceIds=instanceIds, DryRun=True)
+              except ClientError as ce:
+                  if 'DryRunOperation' not in str(ce):
+                      raise
+            
+              # Dry run succeeded, run stop_instances without dryrun
+              try:
+                  response = ec2.stop_instances(
+                      InstanceIds=instanceIds,
+                      DryRun=False
+                  )
+                  print("stopped web servers")
+                  for dbInstanceId in dbInstanceIds:
+                      dbResponse = rds.stop_db_instance(
+                          DBInstanceIdentifier=dbInstanceId
+                      )
+                  print("stopped db instance")
+              except ClientError as ce:
+                  print(ce)
+              except Exception as e:
+                  print(e)
+
+  PermissionStartInstances:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt FunctionStartInstances
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RuleScheduledStart.Arn
+
+  PermissionStopInstances:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt FunctionStopInstances
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RuleScheduledStop.Arn
+
+  RuleScheduledStart:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Scheduled rule to start application'
+      ScheduleExpression: !Ref StartSchedule
+      State: 'ENABLED'
+      Targets:
+        - Arn: !GetAtt FunctionStartInstances.Arn
+          Id: 'StartFunction'
+
+  RuleScheduledStop:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Scheduled rule to stop application'
+      ScheduleExpression: !Ref StopSchedule
+      State: 'ENABLED'
+      Targets:
+        - Arn: !GetAtt FunctionStopInstances.Arn
+          Id: 'StopFunction'
+
+  RoleStartStopInstances:
+    Type: 'AWS::IAM::Role7
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda:amazonaws.com
+              Action:
+                - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: StartStopInstancePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:Describe*'
+                  - 'ec2:Start*'
+                  - 'ec2:Stop*'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'rds:Describe*'
+                  - 'rds:Start*'
+                  - 'rds:Stop*'
+                Resource: '*'
+                
+ 
+ 
 
 Outputs:
   LoadBalancerURL:
