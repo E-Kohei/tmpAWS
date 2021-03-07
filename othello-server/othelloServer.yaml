@@ -25,7 +25,7 @@ Parameters:
   StopSchedule:
     Description: 'Time to stop this application'
     Type: 'String'
-    Default: 'cron(15 10 * * ? *)'
+    Default: 'cron(15 11 * * ? *)'
 
 
 Resources:
@@ -137,7 +137,7 @@ Resources:
       GroupDescription: 'Load balancer security group'
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        - CidrIp: '202.215.72.251/32'
+        - CidrIp: '0.0.0.0/0'
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
@@ -338,7 +338,7 @@ Resources:
                   print(e)
 
   FunctionStopInstances:
-    Type: 'AWS::Lambda::Function
+    Type: 'AWS::Lambda::Function'
     Properties:
       Runtime: python3.8
       Role: !GetAtt RoleStartStopInstances.Arn
@@ -411,7 +411,7 @@ Resources:
   PermissionStartInstances:
     Type: 'AWS::Lambda::Permission'
     Properties:
-      FunctionName: !GetAtt FunctionStartInstances
+      FunctionName: !GetAtt FunctionStartInstances.Arn
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt RuleScheduledStart.Arn
@@ -419,7 +419,7 @@ Resources:
   PermissionStopInstances:
     Type: 'AWS::Lambda::Permission'
     Properties:
-      FunctionName: !GetAtt FunctionStopInstances
+      FunctionName: !GetAtt FunctionStopInstances.Arn
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt RuleScheduledStop.Arn
@@ -445,7 +445,7 @@ Resources:
           Id: 'StopFunction'
 
   RoleStartStopInstances:
-    Type: 'AWS::IAM::Role7
+    Type: 'AWS::IAM::Role'
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -453,9 +453,9 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-                - lambda:amazonaws.com
-              Action:
-                - 'sts:AssumeRole'
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
       Path: /
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
