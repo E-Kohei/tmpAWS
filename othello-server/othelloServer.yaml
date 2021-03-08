@@ -173,7 +173,7 @@ Resources:
           yum -y install mysql-community-client
           while ! nc -z ${Database.Endpoint.Address} 3306; do sleep 10; done
           sleep 10
-          mysql --user=ekohei --host=${Database.Endpoint.Address} --password=${DBPassword} --database=othello --execute="CREATE TABLE records (id INTEGER PRIMARY KEY AUTO_INCREMENT, date_time CHAR(20) NOT NULL, dark_player VARCHAR(11) NOT NULL, light_player VARCHAR(11) NOT NULL, dark_score SMALLINT NOT NULL, light_score SMALLINT NOT NULL, moves VARCHAR(250) NOT NULL);"
+          mysql --user=ekohei --host=${Database.Endpoint.Address} --password=${DBPassword} --database=othello --execute="CREATE TABLE records (id INTEGER PRIMARY KEY AUTO_INCREMENT, date_time CHAR(20) NOT NULL, dark_player VARCHAR(11) NOT NULL, light_player VARCHAR(11) NOT NULL, dark_score SMALLINT NOT NULL, light_score SMALLINT NOT NULL, moves CHAR(240) NOT NULL);"
           
           # Notify CloudFormation that the script ended
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer1 --region ${AWS::Region}
